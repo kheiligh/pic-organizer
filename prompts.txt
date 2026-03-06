@@ -1,0 +1,30 @@
+Build a local photo organizer web application with the following specifications:
+
+Stack:
+- Next.js (App Router) with TypeScript
+- SCSS with media queries for mobile and tablet responsiveness (no Tailwind)
+- SQLite via better-sqlite3 for local storage
+- Anthropic Claude API for AI tagging (use this key: sk-ant-api03-[redacted])
+- sharp for thumbnail generation, exifr for EXIF extraction
+
+Features:
+- Upload photos (drag-and-drop or file picker, batch support)
+- View photos in a responsive grid
+- Automatically tag photos using Claude AI — up to 10 tags per photo (e.g. "whiteboard", "group photo", "indoor", "hiking"). A single photo can and should receive multiple tags if multiple things are present.
+- Extract GPS metadata from photos and group photos within ~1 mile of each other under the same location tag using OpenStreetMap Nominatim for reverse geocoding
+- A re-tag button on the photo detail page that clears existing AI tags and re-runs tagging
+- No login or authentication needed — local use only
+
+Pages:
+- Home: latest 24 photos, stats (total photos, tags, locations), tag cloud. Show a welcoming empty state before any photos are uploaded.
+- /photos: all photos with load-more pagination
+- /photos/[id]: full image, EXIF details, all tags (always visible even if empty or in progress), location info, delete button, re-tag button
+- /upload: drag-and-drop multi-upload with per-file status indicators
+- /tags: all tags grouped by type (AI, location, manual) with frequency bars
+- /tags/[slug]: photos filtered by tag
+
+Data:
+- Store uploaded files in ./uploads/, thumbnails in ./uploads/thumbnails/ (both gitignored)
+- SQLite database at ./photos.db (gitignored)
+- Tags have three types: ai, location, manual
+- AI tagging runs asynchronously after upload so the UI isn't blocked

@@ -1,0 +1,40 @@
+// Color palette
+$bg: #0f0f0f;
+$bg-card: #1a1a1a;
+$bg-hover: #222222;
+$border: #2e2e2e;
+$text-primary: #f0f0f0;
+$text-secondary: #888888;
+$text-muted: #555555;
+$accent: #6366f1;
+$accent-hover: #7c7ff5;
+$accent-soft: rgba(99, 102, 241, 0.12);
+$success: #22c55e;
+$danger: #ef4444;
+$warning: #f59e0b;
+
+// Tag type colors
+$tag-ai: #6366f1;
+$tag-location: #22c55e;
+$tag-manual: #f59e0b;
+
+// Spacing
+$spacing-xs: 4px;
+$spacing-sm: 8px;
+$spacing-md: 16px;
+$spacing-lg: 24px;
+$spacing-xl: 40px;
+
+// Breakpoints
+$bp-mobile: 480px;
+$bp-tablet: 768px;
+$bp-desktop: 1024px;
+$bp-wide: 1400px;
+
+// Border radius
+$radius-sm: 6px;
+$radius-md: 10px;
+$radius-lg: 16px;
+
+// Transitions
+$transition: 0.2s ease;

@@ -1,66 +1,72 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+import Link from 'next/link';
+import { getPhotos, getPhotoCount, getAllTags } from '@/lib/db';
+import PhotoGrid from '@/components/PhotoGrid';
+import TagCloud from '@/components/TagCloud';
 
-export default function Home() {
+export const dynamic = 'force-dynamic';
+
+export default function HomePage() {
+  const photos = getPhotos(24);
+  const total = getPhotoCount();
+  const tags = getAllTags();
+
+  if (total === 0) {
+    return (
+      <div className="container">
+        <div className="empty-state">
+          <div className="empty-state__icon">&#128247;</div>
+          <div className="empty-state__title">Your photo library is empty</div>
+          <div className="empty-state__body">
+            Upload photos to get started. The app will automatically tag them using AI
+            and group nearby photos by location.
+          </div>
+          <Link href="/upload" className="empty-state__cta">
+            Upload your first photos
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className={styles.intro}>
-          <h1>To get started, edit the page.tsx file.</h1>
-          <p>
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="container">
+      <div className="page-header">
+        <h1 className="page-header__title">Latest Photos</h1>
+        <p className="page-header__subtitle">Your personal photo library</p>
+      </div>
+
+      <div className="stats-bar">
+        <div className="stats-bar__item">
+          <span className="stats-bar__value">{total.toLocaleString()}</span>
+          <span className="stats-bar__label">Photos</span>
         </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <div className="stats-bar__item">
+          <span className="stats-bar__value">{tags.length}</span>
+          <span className="stats-bar__label">Tags</span>
         </div>
-      </main>
+        <div className="stats-bar__item">
+          <span className="stats-bar__value">
+            {tags.filter((t) => t.type === 'location').length}
+          </span>
+          <span className="stats-bar__label">Locations</span>
+        </div>
+      </div>
+
+      {tags.length > 0 && (
+        <div style={{ marginBottom: '24px' }}>
+          <TagCloud tags={tags} max={16} />
+        </div>
+      )}
+
+      <PhotoGrid photos={photos} />
+
+      {total > 24 && (
+        <div className="load-more">
+          <Link href="/photos" className="load-more__btn">
+            View all {total.toLocaleString()} photos
+          </Link>
+        </div>
+      )}
     </div>
   );
 }
