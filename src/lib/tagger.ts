@@ -1,9 +1,12 @@
 import Anthropic from '@anthropic-ai/sdk';
 import fs from 'fs';
 import path from 'path';
+import sharp from 'sharp';
 import { attachTag, markPhotoAiTagged, upsertTag, findPhotosNearLocation, upsertTag as upsertTagAlias } from './db';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+const MAX_DIMENSION = 7500;
 
 const TAGGING_PROMPT = `Analyze this photo and return a JSON array of descriptive tags.
 
@@ -17,9 +20,15 @@ Rules:
 Example output: ["outdoor","group photo","hiking","mountain","nature"]`;
 
 export async function tagPhotoWithAI(photoId: number, filePath: string): Promise<string[]> {
-  const imageBuffer = fs.readFileSync(filePath);
-  const base64 = imageBuffer.toString('base64');
   const ext = path.extname(filePath).toLowerCase();
+
+  const metadata = await sharp(filePath).metadata();
+  const needsResize = (metadata.width ?? 0) > MAX_DIMENSION || (metadata.height ?? 0) > MAX_DIMENSION;
+  const imageBuffer = needsResize
+    ? await sharp(filePath).resize(MAX_DIMENSION, MAX_DIMENSION, { fit: 'inside', withoutEnlargement: true }).toBuffer()
+    : fs.readFileSync(filePath);
+
+  const base64 = imageBuffer.toString('base64');
   const mediaType = ext === '.png' ? 'image/png' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
 
   const response = await client.messages.create({
