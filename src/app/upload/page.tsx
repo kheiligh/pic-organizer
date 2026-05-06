@@ -2,6 +2,7 @@
 
 import { useState, useRef, DragEvent, ChangeEvent } from 'react';
 import Link from 'next/link';
+import { useToast } from '@/components/ToastProvider';
 
 interface FileStatus {
   file: File;
@@ -14,6 +15,7 @@ export default function UploadPage() {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { showToast } = useToast();
 
   const addFiles = (files: FileList | File[]) => {
     const arr = Array.from(files).filter((f) => f.type.startsWith('image/'));
@@ -76,7 +78,14 @@ export default function UploadPage() {
             };
           })
         );
-      } catch (err) {
+
+        const failed = data.errors as { name: string; error: string }[] | undefined;
+        if (failed?.length) {
+          const first = failed[0];
+          const extra = failed.length > 1 ? ` (and ${failed.length - 1} more)` : '';
+          showToast(`Upload error — ${first.name}: ${first.error}${extra}`);
+        }
+      } catch {
         setItems((prev) =>
           prev.map((item) =>
             batch.find((b) => b.file === item.file)
@@ -84,6 +93,7 @@ export default function UploadPage() {
               : item
           )
         );
+        showToast('Upload failed: could not reach the server.');
       }
     }
 

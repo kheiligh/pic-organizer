@@ -7,6 +7,7 @@ import { attachTag, markPhotoAiTagged, upsertTag, findPhotosNearLocation, upsert
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const MAX_DIMENSION = 7500;
+const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
 const TAGGING_PROMPT = `Analyze this photo and return a JSON array of descriptive tags.
 
@@ -21,15 +22,26 @@ Example output: ["outdoor","group photo","hiking","mountain","nature"]`;
 
 export async function tagPhotoWithAI(photoId: number, filePath: string): Promise<string[]> {
   const ext = path.extname(filePath).toLowerCase();
+  let mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' =
+    ext === '.png' ? 'image/png' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
 
   const metadata = await sharp(filePath).metadata();
   const needsResize = (metadata.width ?? 0) > MAX_DIMENSION || (metadata.height ?? 0) > MAX_DIMENSION;
-  const imageBuffer = needsResize
+  let imageBuffer: Buffer = needsResize
     ? await sharp(filePath).resize(MAX_DIMENSION, MAX_DIMENSION, { fit: 'inside', withoutEnlargement: true }).toBuffer()
     : fs.readFileSync(filePath);
 
+  // If still over 5 MB, compress to JPEG at decreasing quality until it fits
+  if (imageBuffer.length > MAX_SIZE_BYTES) {
+    let quality = 85;
+    while (imageBuffer.length > MAX_SIZE_BYTES && quality >= 20) {
+      imageBuffer = await sharp(imageBuffer).jpeg({ quality }).toBuffer();
+      mediaType = 'image/jpeg';
+      quality -= 15;
+    }
+  }
+
   const base64 = imageBuffer.toString('base64');
-  const mediaType = ext === '.png' ? 'image/png' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',

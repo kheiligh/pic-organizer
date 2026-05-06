@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { Photo } from '@/lib/db';
+import { useToast } from '@/components/ToastProvider';
 
 function formatBytes(b: number) {
   if (b < 1024) return `${b} B`;
@@ -26,6 +27,7 @@ export default function PhotoDetailPage() {
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [retagging, setRetagging] = useState(false);
+  const { showToast } = useToast();
 
   const loadPhoto = () =>
     fetch(`/api/photos/${id}`)
@@ -37,8 +39,17 @@ export default function PhotoDetailPage() {
 
   const handleRetag = async () => {
     setRetagging(true);
-    await fetch(`/api/photos/${id}/retag`, { method: 'POST' });
-    await loadPhoto();
+    try {
+      const res = await fetch(`/api/photos/${id}/retag`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error ?? 'Re-tagging failed. Please try again.');
+      } else {
+        await loadPhoto();
+      }
+    } catch {
+      showToast('Re-tagging failed: could not reach the server.');
+    }
     setRetagging(false);
   };
 
