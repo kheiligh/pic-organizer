@@ -59,14 +59,14 @@ async function attachTags(photos: Photo[]): Promise<Photo[]> {
     .from('photo_tags')
     .select('photo_id, tags(id, name, type)')
     .in('photo_id', photoIds) as {
-      data: { photo_id: number; tags: Tag[] }[] | null;
+      data: { photo_id: number; tags: Tag | null }[] | null;
       error: PostgrestError | null;
     };
   assertNoError(error, 'Failed to load photo tags');
 
   const tagsByPhoto = new Map<number, Tag[]>();
   for (const row of data ?? []) {
-    const tag = row.tags?.[0];
+    const tag = row.tags;
     if (!tag) continue;
     const existing = tagsByPhoto.get(row.photo_id) ?? [];
     existing.push(tag);
@@ -165,8 +165,8 @@ export async function getTagsForPhoto(photoId: number): Promise<Tag[]> {
     .eq('photo_id', photoId);
   assertNoError(error, 'Failed to load tags for photo');
 
-  return (data ?? [])
-    .map((row: { tags: Tag[] }) => row.tags?.[0])
+  return ((data ?? []) as unknown as { tags: Tag | null }[])
+    .map((row) => row.tags)
     .filter((tag): tag is Tag => Boolean(tag))
     .sort((a: Tag, b: Tag) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name));
 }

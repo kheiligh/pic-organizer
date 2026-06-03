@@ -13,6 +13,6 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { id } = await params;
   const filename = await deletePhoto(parseInt(id));
   if (!filename) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  deleteUploadedFile(filename);
+  await deleteUploadedFile(filename);
   return NextResponse.json({ success: true });
 }

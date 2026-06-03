@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPhotoById, clearAiTags } from '@/lib/db';
 import { tagPhotoWithAI } from '@/lib/tagger';
-import path from 'path';
+import { readUploadedFile } from '@/lib/storage';
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -10,9 +10,9 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   await clearAiTags(photo.id);
 
-  const filePath = path.join(process.cwd(), 'uploads', photo.filename);
   try {
-    const tags = await tagPhotoWithAI(photo.id, filePath);
+    const buffer = await readUploadedFile(photo.filename);
+    const tags = await tagPhotoWithAI(photo.id, buffer);
     return NextResponse.json({ tags });
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);

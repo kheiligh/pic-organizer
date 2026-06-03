@@ -61,8 +61,7 @@ export async function POST(request: NextRequest) {
         await applyLocationTag(photo.id, meta.latitude, meta.longitude, locationLabel);
       }
 
-      const fullPath = path.join(process.cwd(), 'uploads', filename);
-      tagPhotoWithAI(photo.id, fullPath).catch((err) =>
+      tagPhotoWithAI(photo.id, buffer).catch((err) =>
         console.error(`AI tagging failed for photo ${photo.id}:`, err)
       );
 

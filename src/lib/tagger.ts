@@ -1,6 +1,4 @@
 import Anthropic from '@anthropic-ai/sdk';
-import fs from 'fs';
-import path from 'path';
 import sharp from 'sharp';
 import {
   attachTag,
@@ -25,22 +23,24 @@ Rules:
 
 Example output: ["outdoor","group photo","hiking","mountain","nature"]`;
 
-export async function tagPhotoWithAI(photoId: number, filePath: string): Promise<string[]> {
-  const ext = path.extname(filePath).toLowerCase();
+export async function tagPhotoWithAI(photoId: number, sourceBuffer: Buffer): Promise<string[]> {
+  const metadata = await sharp(sourceBuffer).metadata();
   let mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' =
-    ext === '.png' ? 'image/png' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    metadata.format === 'png' ? 'image/png'
+    : metadata.format === 'gif' ? 'image/gif'
+    : metadata.format === 'webp' ? 'image/webp'
+    : 'image/jpeg';
 
-  const metadata = await sharp(filePath).metadata();
   const needsResize =
     (metadata.width ?? 0) > MAX_DIMENSION || (metadata.height ?? 0) > MAX_DIMENSION;
   let imageBuffer: Buffer = needsResize
-    ? await sharp(filePath)
+    ? await sharp(sourceBuffer)
         .resize(MAX_DIMENSION, MAX_DIMENSION, {
           fit: 'inside',
           withoutEnlargement: true,
         })
         .toBuffer()
-    : fs.readFileSync(filePath);
+    : sourceBuffer;
 
   if (imageBuffer.length > MAX_SIZE_BYTES) {
     let quality = 85;
