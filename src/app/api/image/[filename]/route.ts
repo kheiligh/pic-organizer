@@ -11,9 +11,16 @@ export async function GET(
 
   // Sanitize filename — no path traversal
   const safe = path.basename(filename);
-  const filePath = thumb
-    ? path.join(process.cwd(), 'uploads', 'thumbnails', safe)
-    : path.join(process.cwd(), 'uploads', safe);
+  const relPath = thumb ? `thumbnails/${safe}` : safe;
+
+  // When photo_base_url is an absolute URL (e.g. Vercel Blob), redirect there.
+  // Otherwise fall back to reading the local uploads/ folder.
+  const baseUrl = process.env.photo_base_url;
+  if (baseUrl && /^https?:\/\//.test(baseUrl)) {
+    return NextResponse.redirect(`${baseUrl.replace(/\/$/, '')}/${relPath}`, 302);
+  }
+
+  const filePath = path.join(process.cwd(), 'uploads', relPath);
 
   if (!fs.existsSync(filePath)) {
     return new NextResponse('Not found', { status: 404 });

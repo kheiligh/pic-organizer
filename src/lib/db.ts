@@ -144,13 +144,16 @@ export async function getPhotoCount(tagId?: number): Promise<number> {
   if (tagId) {
     const { count, error } = await supabase
       .from('photo_tags')
-      .select('photo_id', { count: 'exact', head: true })
+      .select('photo_id', { count: 'exact' })
       .eq('tag_id', tagId);
+
     assertNoError(error, 'Failed to count tagged photos');
     return count ?? 0;
   }
-
-  const { count, error } = await supabase.from('photos').select('id', { count: 'exact', head: true });
+  const { count, error } = await supabase
+    .from('photos')
+    .select('*', { count: 'exact' });
+  console.log('Counted total photos:', { count, error });
   assertNoError(error, 'Failed to count photos');
   return count ?? 0;
 }
