@@ -1,58 +1,15 @@
-import Database from 'better-sqlite3';
-import path from 'path';
-import fs from 'fs';
+import { createClient, type PostgrestError } from '@supabase/supabase-js';
 
-const DB_PATH = path.join(process.cwd(), 'photos.db');
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_ANON_KEY;
 
-let db: Database.Database;
-
-export function getDb(): Database.Database {
-  if (!db) {
-    db = new Database(DB_PATH);
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-    initSchema(db);
-  }
-  return db;
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  throw new Error('Missing Supabase environment variables: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
 }
 
-function initSchema(db: Database.Database) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS photos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      filename TEXT NOT NULL UNIQUE,
-      original_name TEXT NOT NULL,
-      mime_type TEXT NOT NULL,
-      size INTEGER NOT NULL,
-      width INTEGER,
-      height INTEGER,
-      taken_at TEXT,
-      uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
-      latitude REAL,
-      longitude REAL,
-      location_label TEXT,
-      ai_tagged INTEGER NOT NULL DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS tags (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      type TEXT NOT NULL CHECK(type IN ('ai', 'location', 'manual')),
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS photo_tags (
-      photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
-      tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-      PRIMARY KEY (photo_id, tag_id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_photos_taken_at ON photos(taken_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_photos_uploaded_at ON photos(uploaded_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_photo_tags_photo ON photo_tags(photo_id);
-    CREATE INDEX IF NOT EXISTS idx_photo_tags_tag ON photo_tags(tag_id);
-  `);
-}
+export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: false, detectSessionInUrl: false },
+});
 
 export interface Photo {
   id: number;
@@ -78,119 +35,237 @@ export interface Tag {
   count?: number;
 }
 
-export function insertPhoto(data: Omit<Photo, 'id' | 'uploaded_at' | 'ai_tagged' | 'tags'>): Photo {
-  const db = getDb();
-  const stmt = db.prepare(`
-    INSERT INTO photos (filename, original_name, mime_type, size, width, height, taken_at, latitude, longitude, location_label)
-    VALUES (@filename, @original_name, @mime_type, @size, @width, @height, @taken_at, @latitude, @longitude, @location_label)
-  `);
-  const result = stmt.run(data);
-  return getPhotoById(result.lastInsertRowid as number)!;
+type PhotoTagRow = {
+  photo_id: number;
+  tags: Tag;
+};
+
+type TagWithPhotoTags = Tag & {
+  photo_tags?: { photo_id: number }[];
+};
+
+function assertNoError(error: PostgrestError | null, message: string) {
+  if (error) {
+    console.error(message, error);
+    throw new Error(`${message}: ${error.message}`);
+  }
 }
 
-export function getPhotoById(id: number): Photo | null {
-  const db = getDb();
-  const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(id) as Photo | undefined;
-  if (!photo) return null;
-  photo.tags = getTagsForPhoto(id);
+async function attachTags(photos: Photo[]): Promise<Photo[]> {
+  if (photos.length === 0) return photos;
+
+  const photoIds = photos.map((photo) => photo.id);
+  const { data, error } = await supabase
+    .from('photo_tags')
+    .select('photo_id, tags(id, name, type)')
+    .in('photo_id', photoIds) as {
+      data: { photo_id: number; tags: Tag[] }[] | null;
+      error: PostgrestError | null;
+    };
+  assertNoError(error, 'Failed to load photo tags');
+
+  const tagsByPhoto = new Map<number, Tag[]>();
+  for (const row of data ?? []) {
+    const tag = row.tags?.[0];
+    if (!tag) continue;
+    const existing = tagsByPhoto.get(row.photo_id) ?? [];
+    existing.push(tag);
+    tagsByPhoto.set(row.photo_id, existing);
+  }
+
+  return photos.map((photo) => ({
+    ...photo,
+    tags: tagsByPhoto.get(photo.id) ?? [],
+  }));
+}
+
+export async function insertPhoto(
+  data: Omit<Photo, 'id' | 'uploaded_at' | 'ai_tagged' | 'tags'>
+): Promise<Photo> {
+  const { data: photo, error } = await supabase
+    .from('photos')
+    .insert([{ ...data }])
+    .select('*')
+    .single();
+  assertNoError(error, 'Failed to insert photo');
+  return { ...(photo as Photo), tags: [] };
+}
+
+export async function getPhotoById(id: number): Promise<Photo | null> {
+  const { data, error } = await supabase.from('photos').select('*').eq('id', id).maybeSingle();
+  assertNoError(error, 'Failed to load photo');
+  if (!data) return null;
+  const photo = data as Photo;
+  photo.tags = await getTagsForPhoto(id);
   return photo;
 }
 
-export function getPhotos(limit = 50, offset = 0, tagId?: number): Photo[] {
-  const db = getDb();
-  let photos: Photo[];
+export async function getPhotos(
+  limit = 50,
+  offset = 0,
+  tagId?: number
+): Promise<Photo[]> {
   if (tagId) {
-    photos = db.prepare(`
-      SELECT p.* FROM photos p
-      JOIN photo_tags pt ON pt.photo_id = p.id
-      WHERE pt.tag_id = ?
-      ORDER BY COALESCE(p.taken_at, p.uploaded_at) DESC
-      LIMIT ? OFFSET ?
-    `).all(tagId, limit, offset) as Photo[];
-  } else {
-    photos = db.prepare(`
-      SELECT * FROM photos
-      ORDER BY COALESCE(taken_at, uploaded_at) DESC
-      LIMIT ? OFFSET ?
-    `).all(limit, offset) as Photo[];
+    const { data: taggedRows, error: taggedError } = await supabase
+      .from('photo_tags')
+      .select('photo_id')
+      .eq('tag_id', tagId) as {
+        data: { photo_id: number }[] | null;
+        error: PostgrestError | null;
+      };
+    assertNoError(taggedError, 'Failed to load tagged photos');
+
+    const photoIds = (taggedRows ?? []).map((row) => row.photo_id);
+    if (photoIds.length === 0) return [];
+
+    const { data: photosData, error: photosError } = await supabase
+      .from('photos')
+      .select('*')
+      .in('id', photoIds)
+      .order('taken_at', { ascending: false })
+      .order('uploaded_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+    assertNoError(photosError, 'Failed to load photos by tag');
+
+    return attachTags((photosData ?? []) as Photo[]);
   }
-  for (const photo of photos) {
-    photo.tags = getTagsForPhoto(photo.id);
-  }
-  return photos;
+
+  const { data: photosData, error } = await supabase
+    .from('photos')
+    .select('*')
+    .order('taken_at', { ascending: false })
+    .order('uploaded_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+  assertNoError(error, 'Failed to load photos');
+  return attachTags((photosData ?? []) as Photo[]);
 }
 
-export function getPhotoCount(tagId?: number): number {
-  const db = getDb();
+export async function getPhotoCount(tagId?: number): Promise<number> {
   if (tagId) {
-    const row = db.prepare('SELECT COUNT(*) as count FROM photo_tags WHERE tag_id = ?').get(tagId) as { count: number };
-    return row.count;
+    const { count, error } = await supabase
+      .from('photo_tags')
+      .select('photo_id', { count: 'exact', head: true })
+      .eq('tag_id', tagId);
+    assertNoError(error, 'Failed to count tagged photos');
+    return count ?? 0;
   }
-  const row = db.prepare('SELECT COUNT(*) as count FROM photos').get() as { count: number };
-  return row.count;
+
+  const { count, error } = await supabase.from('photos').select('id', { count: 'exact', head: true });
+  assertNoError(error, 'Failed to count photos');
+  return count ?? 0;
 }
 
-export function getTagsForPhoto(photoId: number): Tag[] {
-  const db = getDb();
-  return db.prepare(`
-    SELECT t.* FROM tags t
-    JOIN photo_tags pt ON pt.tag_id = t.id
-    WHERE pt.photo_id = ?
-    ORDER BY t.type, t.name
-  `).all(photoId) as Tag[];
+export async function getTagsForPhoto(photoId: number): Promise<Tag[]> {
+  const { data, error } = await supabase
+    .from('photo_tags')
+    .select('tags(id, name, type)')
+    .eq('photo_id', photoId);
+  assertNoError(error, 'Failed to load tags for photo');
+
+  return (data ?? [])
+    .map((row: { tags: Tag[] }) => row.tags?.[0])
+    .filter((tag): tag is Tag => Boolean(tag))
+    .sort((a: Tag, b: Tag) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name));
 }
 
-export function getAllTags(): (Tag & { count: number })[] {
-  const db = getDb();
-  return db.prepare(`
-    SELECT t.*, COUNT(pt.photo_id) as count
-    FROM tags t
-    JOIN photo_tags pt ON pt.tag_id = t.id
-    GROUP BY t.id
-    ORDER BY count DESC, t.name ASC
-  `).all() as (Tag & { count: number })[];
+export async function getAllTags(): Promise<(Tag & { count: number })[]> {
+  const { data, error } = await supabase
+    .from('tags')
+    .select('id, name, type, photo_tags(photo_id)');
+  assertNoError(error, 'Failed to load tags');
+
+  return (data ?? [])
+    .map((row: TagWithPhotoTags) => ({
+      id: row.id,
+      name: row.name,
+      type: row.type,
+      count: row.photo_tags?.length ?? 0,
+    }))
+    .sort((a: Tag & { count: number }, b: Tag & { count: number }) =>
+      b.count - a.count || a.name.localeCompare(b.name)
+    );
 }
 
-export function getTagBySlug(slug: string): Tag | null {
-  const db = getDb();
-  return db.prepare('SELECT * FROM tags WHERE name = ?').get(slug) as Tag | null;
+export async function getTagBySlug(slug: string): Promise<Tag | null> {
+  const { data, error } = await supabase.from('tags').select('*').eq('name', slug).maybeSingle();
+  assertNoError(error, 'Failed to load tag');
+  return data as Tag | null;
 }
 
-export function upsertTag(name: string, type: Tag['type']): Tag {
-  const db = getDb();
-  db.prepare(`
-    INSERT INTO tags (name, type) VALUES (?, ?)
-    ON CONFLICT(name) DO NOTHING
-  `).run(name, type);
-  return db.prepare('SELECT * FROM tags WHERE name = ?').get(name) as Tag;
+export async function upsertTag(name: string, type: Tag['type']): Promise<Tag> {
+  const { error } = await supabase
+    .from('tags')
+    .upsert([{ name, type }], { onConflict: 'name', ignoreDuplicates: true });
+  assertNoError(error, 'Failed to upsert tag');
+
+  const tag = await getTagBySlug(name);
+  if (!tag) throw new Error('Failed to resolve upserted tag');
+  return tag;
 }
 
-export function attachTag(photoId: number, tagId: number) {
-  const db = getDb();
-  db.prepare('INSERT OR IGNORE INTO photo_tags (photo_id, tag_id) VALUES (?, ?)').run(photoId, tagId);
+export async function attachTag(photoId: number, tagId: number): Promise<void> {
+  const { error } = await supabase
+    .from('photo_tags')
+    .upsert([{ photo_id: photoId, tag_id: tagId }], {
+      onConflict: 'photo_id,tag_id',
+      ignoreDuplicates: true,
+    });
+  assertNoError(error, 'Failed to attach tag to photo');
 }
 
-export function markPhotoAiTagged(photoId: number) {
-  const db = getDb();
-  db.prepare('UPDATE photos SET ai_tagged = 1 WHERE id = ?').run(photoId);
+export async function markPhotoAiTagged(photoId: number): Promise<void> {
+  const { error } = await supabase.from('photos').update({ ai_tagged: 1 }).eq('id', photoId);
+  assertNoError(error, 'Failed to mark photo as AI tagged');
 }
 
-export function deletePhoto(id: number): string | null {
-  const db = getDb();
-  const photo = db.prepare('SELECT filename FROM photos WHERE id = ?').get(id) as { filename: string } | undefined;
-  if (!photo) return null;
-  db.prepare('DELETE FROM photos WHERE id = ?').run(id);
-  return photo.filename;
+export async function deletePhoto(id: number): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('photos')
+    .delete()
+    .select('filename')
+    .eq('id', id)
+    .single();
+  assertNoError(error, 'Failed to delete photo');
+  return data?.filename ?? null;
 }
 
-// Find photos within ~1 mile radius (0.0145 degrees ≈ 1 mile)
-export function findPhotosNearLocation(lat: number, lon: number, radiusDeg = 0.0145): Photo[] {
-  const db = getDb();
-  return db.prepare(`
-    SELECT * FROM photos
-    WHERE latitude IS NOT NULL
-      AND ABS(latitude - ?) < ?
-      AND ABS(longitude - ?) < ?
-    LIMIT 100
-  `).all(lat, radiusDeg, lon, radiusDeg) as Photo[];
+export async function clearAiTags(photoId: number): Promise<void> {
+  const { data: aiTags, error: aiTagError } = await supabase
+    .from('tags')
+    .select('id')
+    .eq('type', 'ai');
+  assertNoError(aiTagError, 'Failed to load AI tag ids');
+
+  const aiTagIds = (aiTags ?? []).map((row: { id: number }) => row.id);
+  if (aiTagIds.length > 0) {
+    const { error: deleteError } = await supabase
+      .from('photo_tags')
+      .delete()
+      .eq('photo_id', photoId)
+      .in('tag_id', aiTagIds);
+    assertNoError(deleteError, 'Failed to remove AI tags from photo');
+  }
+
+  const { error: updateError } = await supabase
+    .from('photos')
+    .update({ ai_tagged: 0 })
+    .eq('id', photoId);
+  assertNoError(updateError, 'Failed to reset photo AI flag');
+}
+
+export async function findPhotosNearLocation(
+  lat: number,
+  lon: number,
+  radiusDeg = 0.0145
+): Promise<Photo[]> {
+  const { data, error } = await supabase
+    .from('photos')
+    .select('*')
+    .gte('latitude', lat - radiusDeg)
+    .lte('latitude', lat + radiusDeg)
+    .gte('longitude', lon - radiusDeg)
+    .lte('longitude', lon + radiusDeg)
+    .limit(100);
+  assertNoError(error, 'Failed to find nearby photos');
+  return (data ?? []) as Photo[];
 }

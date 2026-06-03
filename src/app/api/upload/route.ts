@@ -39,14 +39,12 @@ export async function POST(request: NextRequest) {
       const meta = await extractMetadata(tmpPath);
       fs.unlinkSync(tmpPath);
 
-      // Reverse geocode if we have GPS
       let locationLabel: string | null = null;
       if (meta.latitude != null && meta.longitude != null) {
         locationLabel = await reverseGeocode(meta.latitude, meta.longitude);
       }
 
-      // Insert into DB
-      const photo = insertPhoto({
+      const photo = await insertPhoto({
         filename,
         original_name: file.name,
         mime_type: file.type || 'image/jpeg',
@@ -59,12 +57,10 @@ export async function POST(request: NextRequest) {
         location_label: locationLabel,
       });
 
-      // Apply location tag synchronously (fast)
       if (meta.latitude != null && meta.longitude != null) {
         await applyLocationTag(photo.id, meta.latitude, meta.longitude, locationLabel);
       }
 
-      // AI tagging is async — fire and forget, client can poll
       const fullPath = path.join(process.cwd(), 'uploads', filename);
       tagPhotoWithAI(photo.id, fullPath).catch((err) =>
         console.error(`AI tagging failed for photo ${photo.id}:`, err)

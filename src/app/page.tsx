@@ -5,10 +5,10 @@ import TagCloud from '@/components/TagCloud';
 
 export const dynamic = 'force-dynamic';
 
-export default function HomePage() {
-  const photos = getPhotos(24);
-  const total = getPhotoCount();
-  const tags = getAllTags();
+export default async function HomePage() {
+  const photos = await getPhotos(24);
+  const total = await getPhotoCount();
+  const tags = await getAllTags();
 
   if (total === 0) {
     return (

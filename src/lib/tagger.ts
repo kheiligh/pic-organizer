@@ -2,7 +2,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
-import { attachTag, markPhotoAiTagged, upsertTag, findPhotosNearLocation, upsertTag as upsertTagAlias } from './db';
+import {
+  attachTag,
+  markPhotoAiTagged,
+  upsertTag,
+  findPhotosNearLocation,
+} from './db';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -26,12 +31,17 @@ export async function tagPhotoWithAI(photoId: number, filePath: string): Promise
     ext === '.png' ? 'image/png' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
 
   const metadata = await sharp(filePath).metadata();
-  const needsResize = (metadata.width ?? 0) > MAX_DIMENSION || (metadata.height ?? 0) > MAX_DIMENSION;
+  const needsResize =
+    (metadata.width ?? 0) > MAX_DIMENSION || (metadata.height ?? 0) > MAX_DIMENSION;
   let imageBuffer: Buffer = needsResize
-    ? await sharp(filePath).resize(MAX_DIMENSION, MAX_DIMENSION, { fit: 'inside', withoutEnlargement: true }).toBuffer()
+    ? await sharp(filePath)
+        .resize(MAX_DIMENSION, MAX_DIMENSION, {
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
+        .toBuffer()
     : fs.readFileSync(filePath);
 
-  // If still over 5 MB, compress to JPEG at decreasing quality until it fits
   if (imageBuffer.length > MAX_SIZE_BYTES) {
     let quality = 85;
     while (imageBuffer.length > MAX_SIZE_BYTES && quality >= 20) {
@@ -60,25 +70,23 @@ export async function tagPhotoWithAI(photoId: number, filePath: string): Promise
   const text = response.content[0].type === 'text' ? response.content[0].text.trim() : '[]';
   let tags: string[] = [];
   try {
-    // Extract JSON array even if there's surrounding text
     const match = text.match(/\[[\s\S]*?\]/);
     if (match) tags = JSON.parse(match[0]);
   } catch {
     tags = [];
   }
 
-  // Normalize and persist
   const normalized = tags
     .filter((t) => typeof t === 'string' && t.length > 0 && t.length < 60)
     .map((t) => t.toLowerCase().trim())
     .slice(0, 10);
 
   for (const tagName of normalized) {
-    const tag = upsertTag(tagName, 'ai');
-    attachTag(photoId, tag.id);
+    const tag = await upsertTag(tagName, 'ai');
+    await attachTag(photoId, tag.id);
   }
 
-  markPhotoAiTagged(photoId);
+  await markPhotoAiTagged(photoId);
   return normalized;
 }
 
@@ -88,10 +96,8 @@ export async function applyLocationTag(
   lon: number,
   locationLabel: string | null
 ): Promise<void> {
-  // Find existing location tags nearby (within ~1 mile)
-  const nearbyPhotos = findPhotosNearLocation(lat, lon);
+  const nearbyPhotos = await findPhotosNearLocation(lat, lon);
 
-  // Check if any nearby photo already has a location tag
   let locationTagName: string | null = null;
   for (const nearby of nearbyPhotos) {
     if (nearby.id === photoId) continue;
@@ -101,13 +107,12 @@ export async function applyLocationTag(
     }
   }
 
-  // Fall back to reverse geocoded label
   if (!locationTagName && locationLabel) {
     locationTagName = locationLabel;
   }
 
   if (locationTagName) {
-    const tag = upsertTag(locationTagName, 'location');
-    attachTag(photoId, tag.id);
+    const tag = await upsertTag(locationTagName, 'location');
+    await attachTag(photoId, tag.id);
   }
 }

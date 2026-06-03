@@ -7,8 +7,8 @@ export async function GET(request: NextRequest) {
   const offset = parseInt(searchParams.get('offset') || '0');
   const tagId = searchParams.get('tagId') ? parseInt(searchParams.get('tagId')!) : undefined;
 
-  const photos = getPhotos(limit, offset, tagId);
-  const total = getPhotoCount(tagId);
+  const photos = await getPhotos(limit, offset, tagId);
+  const total = await getPhotoCount(tagId);
 
   return NextResponse.json({ photos, total, limit, offset });
 }

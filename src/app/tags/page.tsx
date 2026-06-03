@@ -4,8 +4,8 @@ import { Tag } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
-export default function TagsPage() {
-  const tags = getAllTags();
+export default async function TagsPage() {
+  const tags = await getAllTags();
 
   if (tags.length === 0) {
     return (
